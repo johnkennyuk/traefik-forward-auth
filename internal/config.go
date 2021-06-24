@@ -39,6 +39,7 @@ type Config struct {
 	Path                   string               `long:"url-path" env:"URL_PATH" default:"/_oauth" description:"Callback URL Path"`
 	SecretString           string               `long:"secret" env:"SECRET" description:"Secret used for signing (required)" json:"-"`
 	Whitelist              CommaSeparatedList   `long:"whitelist" env:"WHITELIST" env-delim:"," description:"Only allow given email addresses, can be set multiple times"`
+	Port                   int                  `long:"port" env:"PORT" default:"4181" description:"Port to listen on"`
 
 	Providers provider.Providers `group:"providers" namespace:"providers" env-namespace:"PROVIDERS"`
 	Rules     map[string]*Rule   `long:"rule.<name>.<param>" description:"Rule definitions, param can be: \"action\", \"rule\" or \"provider\""`
@@ -210,6 +211,14 @@ func (c *Config) parseUnknownFlag(option string, arg flags.SplitArgument, args [
 			rule.Rule = val
 		case "provider":
 			rule.Provider = val
+		case "whitelist":
+			list := CommaSeparatedList{}
+			list.UnmarshalFlag(val)
+			rule.Whitelist = list
+		case "domains":
+			list := CommaSeparatedList{}
+			list.UnmarshalFlag(val)
+			rule.Domains = list
 		default:
 			return args, fmt.Errorf("invalid route param: %v", option)
 		}
@@ -327,9 +336,11 @@ func (c *Config) setupProvider(name string) error {
 
 // Rule holds defined rules
 type Rule struct {
-	Action   string
-	Rule     string
-	Provider string
+	Action    string
+	Rule      string
+	Provider  string
+	Whitelist CommaSeparatedList
+	Domains   CommaSeparatedList
 }
 
 // NewRule creates a new rule object

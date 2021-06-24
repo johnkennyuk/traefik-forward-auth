@@ -58,7 +58,11 @@ func (s *Server) RootHandler(w http.ResponseWriter, r *http.Request) {
 	// Modify request
 	r.Method = r.Header.Get("X-Forwarded-Method")
 	r.Host = r.Header.Get("X-Forwarded-Host")
-	r.URL, _ = url.Parse(r.Header.Get("X-Forwarded-Uri"))
+
+	// Read URI from header if we're acting as forward auth middleware
+	if _, ok := r.Header["X-Forwarded-Uri"]; ok {
+		r.URL, _ = url.Parse(r.Header.Get("X-Forwarded-Uri"))
+	}
 
 	// Pass to mux
 	s.router.ServeHTTP(w, r)
@@ -101,7 +105,7 @@ func (s *Server) AuthHandler(providerName, rule string) http.HandlerFunc {
 		}
 
 		// Validate user
-		valid := ValidateEmail(email)
+		valid := ValidateEmail(email, rule)
 		if !valid {
 			logger.WithField("email", email).Warn("Invalid email")
 			http.Error(w, "Not authorized", 401)
@@ -121,16 +125,26 @@ func (s *Server) AuthCallbackHandler() http.HandlerFunc {
 		// Logging setup
 		logger := s.logger(r, "AuthCallback", "default", "Handling callback")
 
+		// Check state
+		state := r.URL.Query().Get("state")
+		if err := ValidateState(state); err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err,
+			}).Warn("Error validating state")
+			http.Error(w, "Not authorized", 401)
+			return
+		}
+
 		// Check for CSRF cookie
-		c, err := r.Cookie(config.CSRFCookieName)
+		c, err := FindCSRFCookie(r, state)
 		if err != nil {
 			logger.Info("Missing csrf cookie")
 			http.Error(w, "Not authorized", 401)
 			return
 		}
 
-		// Validate state
-		valid, providerName, redirect, err := ValidateCSRFCookie(r, c)
+		// Validate CSRF cookie against state
+		valid, providerName, redirect, err := ValidateCSRFCookie(c, state)
 		if !valid {
 			logger.WithFields(logrus.Fields{
 				"error":       err,
@@ -153,7 +167,7 @@ func (s *Server) AuthCallbackHandler() http.HandlerFunc {
 		}
 
 		// Clear CSRF cookie
-		http.SetCookie(w, ClearCSRFCookie(r))
+		http.SetCookie(w, ClearCSRFCookie(r, c))
 
 		// Exchange code for token
 		token, err := p.ExchangeCode(redirectUri(r), r.URL.Query().Get("code"))
